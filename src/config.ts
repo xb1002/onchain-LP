@@ -17,6 +17,10 @@ const pool: Pool =
     ? { token0: tokenA, token1: tokenB, fee }
     : { token0: tokenB, token1: tokenA, fee };
 
+const uniswapV3 = {
+  swapRouterAddress: "0x2626664c2603336E57B271c5C0b26F421741e481", // Uniswap V3 Swap Router 地址
+};
 export const config = {
   pool,
+  uniswapV3,
 };
