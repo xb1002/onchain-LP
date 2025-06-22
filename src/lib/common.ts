@@ -1,5 +1,6 @@
 import { ethers } from "hardhat";
 import { IERC20, IUniswapV3Pool } from "../../typechain-types";
+import { Wallet } from "ethers";
 
 enum FeeAmount {
   LOW = 500, // 0.05%
@@ -29,8 +30,11 @@ interface Pool {
   fee: FeeAmount;
 }
 
-async function getERC20TokenContract(address: string): Promise<IERC20> {
-  const contract = await ethers.getContractAt("IERC20", address);
+async function getERC20TokenContract(
+  address: string,
+  wallet?: Wallet
+): Promise<IERC20> {
+  const contract = await ethers.getContractAt("IERC20", address, wallet);
   return contract as IERC20;
 }
 
