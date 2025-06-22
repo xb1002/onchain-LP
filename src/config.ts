@@ -12,15 +12,17 @@ const tokenB: Token = {
   decimals: 6,
 };
 
-const pool: Pool =
-  tokenA.address < tokenB.address
-    ? { token0: tokenA, token1: tokenB, fee }
-    : { token0: tokenB, token1: tokenA, fee };
+const pool: Pool = Pool.create(tokenA, tokenB, fee);
+let pools: Pool[] = [pool];
+
+// 添加pool
+pools.push(Pool.create(tokenA, tokenB, FeeAmount.MEDIUM));
 
 const uniswapV3 = {
   swapRouterAddress: "0x2626664c2603336E57B271c5C0b26F421741e481", // Uniswap V3 Swap Router 地址
 };
 export const config = {
   pool,
+  pools,
   uniswapV3,
 };
