@@ -24,10 +24,18 @@ interface Token {
   decimals: number;
 }
 
-interface Pool {
+class Pool {
   token0: Token;
   token1: Token;
   fee: FeeAmount;
+  constructor(token0: Token, token1: Token, fee: FeeAmount) {
+    [this.token0, this.token1] =
+      token0.address < token1.address ? [token0, token1] : [token1, token0];
+    this.fee = fee;
+  }
+  static create(token0: Token, token1: Token, fee: FeeAmount): Pool {
+    return new Pool(token0, token1, fee);
+  }
 }
 
 async function getERC20TokenContract(
