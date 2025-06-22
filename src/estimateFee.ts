@@ -7,6 +7,9 @@ import {
 import { config } from "./config";
 import fs from "fs";
 import readline from "readline";
+import { ethers } from "hardhat";
+
+const defaultDataSaveDir = "./data/feeGrowthGlobal"; // 这里不要在最后加斜杠
 
 interface record {
   timeStamp: string;
@@ -14,11 +17,10 @@ interface record {
   feeGrowthGlobal1X128: string;
 }
 
-const pool: Pool = config.pool;
-
 async function getFeeGrowthGlobal(
   pool: Pool,
-  save: boolean = false
+  save: boolean = false,
+  saveDir: string = defaultDataSaveDir
 ): Promise<{
   feeGrowthGlobal0X128: bigint;
   feeGrowthGlobal1X128: bigint;
@@ -37,7 +39,7 @@ async function getFeeGrowthGlobal(
       feeGrowthGlobal0X128: feeGrowthGlobal0X128.toString(),
       feeGrowthGlobal1X128: feeGrowthGlobal1X128.toString(),
     });
-    const saveFile = `./data/feeGrowthGlobal_${pool.token0.symbol}_${pool.token1.symbol}.jsonl`;
+    const saveFile = `${saveDir}/${pool.token0.symbol}_${pool.token1.symbol}_${pool.fee}.jsonl`;
     fs.writeFileSync(saveFile, record + "\n", {
       flag: "a+",
     });
@@ -45,7 +47,7 @@ async function getFeeGrowthGlobal(
   return { feeGrowthGlobal0X128, feeGrowthGlobal1X128 };
 }
 
-async function fetchFeeGrowthGlobal(interval: number) {
+async function fetchFeeGrowthGlobal(pool: Pool, interval: number) {
   while (true) {
     try {
       const feeGrowth = await getFeeGrowthGlobal(pool, true);
@@ -59,7 +61,11 @@ async function fetchFeeGrowthGlobal(interval: number) {
   }
 }
 
-async function readFeeGrowthGlobal(filePath: string): Promise<record[]> {
+async function readFeeGrowthGlobal(
+  pool: Pool,
+  saveDir: string = defaultDataSaveDir
+): Promise<record[]> {
+  const filePath = `${saveDir}/${pool.token0.symbol}_${pool.token1.symbol}_${pool.fee}.jsonl`;
   const fileStream = fs.createReadStream(filePath);
   const rl = readline.createInterface({
     input: fileStream,
@@ -119,31 +125,41 @@ async function estimateFeeEarnedPerLiquidity(
 }
 
 async function main() {
+  const pools: Pool[] = config.pools;
+  // 如何网络是localhost，则挖掘一个区块
+  const network = await ethers.provider.getNetwork();
+  if (network.name === "localhost") {
+    await ethers.provider.send("evm_mine", []);
+  }
   // 程序1
   // 获取数据
-  //   const interval = 30 * 60 * 1000; // 每30分钟获取一次
-  //   await fetchFeeGrowthGlobal(interval);
+  let program1Task: Promise<void>[] = [];
+  const interval = 30 * 60 * 1000; // 每30分钟获取一次
+  for (const pool of pools) {
+    program1Task.push(fetchFeeGrowthGlobal(pool, interval));
+  }
+  await Promise.all(program1Task);
   //   程序2
   // 解析数据
-  const filePath = `./data/feeGrowthGlobal_${pool.token0.symbol}_${pool.token1.symbol}.jsonl`;
-  const records = await readFeeGrowthGlobal(filePath);
-  const timeInterval = 1 * 60 * 60 * 1000; // 24小时
-  const { fee0Annualized, fee1Annualized } =
-    await estimateFeeEarnedPerLiquidity(records, timeInterval);
-  console.log("Estimated Fee Earned Per Liquidity:");
-  console.log(`${pool.token0.symbol}: ${fee0Annualized}`);
-  console.log(`${pool.token1.symbol}: ${fee1Annualized}`);
-  // 根据流动性估算年化的Fee
-  const liquidity = 5016665538715888; // 这里的流动性需要根据实际情况获取
-  const Fee0Earned = fee0Annualized * liquidity;
-  const Fee1Earned = fee1Annualized * liquidity;
-  console.log("Estimated Fee(readable) Earned:");
-  console.log(
-    `${pool.token0.symbol}: ${Fee0Earned / 10 ** pool.token0.decimals}`
-  );
-  console.log(
-    `${pool.token1.symbol}: ${Fee1Earned / 10 ** pool.token1.decimals}`
-  );
+  // const pool = pools[0]; // 只解析第一个池子
+  // const records = await readFeeGrowthGlobal(pool);
+  // const timeInterval = 1 * 60 * 60 * 1000; // 24小时
+  // const { fee0Annualized, fee1Annualized } =
+  //   await estimateFeeEarnedPerLiquidity(records, timeInterval);
+  // console.log("Estimated Fee Earned Per Liquidity:");
+  // console.log(`${pool.token0.symbol}: ${fee0Annualized}`);
+  // console.log(`${pool.token1.symbol}: ${fee1Annualized}`);
+  // // 根据流动性估算年化的Fee
+  // const liquidity = 5016665538715888; // 1个ETH、2500USDC上+200下-200Tick的流动性
+  // const Fee0Earned = fee0Annualized * liquidity;
+  // const Fee1Earned = fee1Annualized * liquidity;
+  // console.log("Estimated Fee(readable) Earned:");
+  // console.log(
+  //   `${pool.token0.symbol}: ${Fee0Earned / 10 ** pool.token0.decimals}`
+  // );
+  // console.log(
+  //   `${pool.token1.symbol}: ${Fee1Earned / 10 ** pool.token1.decimals}`
+  // );
 }
 
 main()
