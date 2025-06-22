@@ -196,8 +196,8 @@ async function test() {
   console.log("Final USDC balance:", finalUsdcBalance);
 }
 
-test()
-  .then(() => console.log("Test completed successfully."))
-  .catch((error) => console.error("Error during test:", error));
+// test()
+//   .then(() => console.log("Test completed successfully."))
+//   .catch((error) => console.error("Error during test:", error));
 
 export { PositionManager, PositionResponse, Uint128Max };
