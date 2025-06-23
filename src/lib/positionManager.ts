@@ -98,10 +98,17 @@ class PositionManager {
 
   public async mintPosition(
     params: INonfungiblePositionManager.MintParamsStruct
-  ): Promise<TransactionReceipt> {
+  ): Promise<bigint> {
+    const { tokenId } = await this.nonfungiblePositionManager!.mint.staticCall(
+      params
+    );
     const tx = await this.nonfungiblePositionManager!.mint(params);
     const receipt = await tx.wait();
-    return receipt!;
+    if (receipt!.status !== 1) {
+      throw new Error("Minting position failed.");
+    } else {
+      return tokenId;
+    }
   }
 
   public async removeLiquidity(
@@ -129,7 +136,7 @@ class PositionManager {
 
 async function test() {
   // mine a block
-  await ethers.provider.send("evm_mine", []);
+  // await ethers.provider.send("evm_mine", []);
   const wallet = new Wallet(process.env.PRIVATE_KEY!, ethers.provider);
   const positionManager = await PositionManager.create(wallet);
   const weth = await getERC20TokenContract(
@@ -151,13 +158,13 @@ async function test() {
   const position = await positionManager.getPosition(tokenId);
   console.log("Position details:", position);
   // 收取流动性费用
-  const collectParams: INonfungiblePositionManager.CollectParamsStruct = {
-    tokenId,
-    recipient: wallet.address,
-    amount0Max: Uint128Max,
-    amount1Max: Uint128Max,
-  };
-  const collectReceipt = await positionManager.collect(collectParams);
+  // const collectParams: INonfungiblePositionManager.CollectParamsStruct = {
+  //   tokenId,
+  //   recipient: wallet.address,
+  //   amount0Max: Uint128Max,
+  //   amount1Max: Uint128Max,
+  // };
+  // const collectReceipt = await positionManager.collect(collectParams);
   // console.log("Collect receipt:", collectReceipt);
 
   // 查看weth和usdc的余额
