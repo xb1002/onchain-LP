@@ -2,7 +2,7 @@ import { ethers } from "hardhat";
 import { Wallet, TransactionReceipt } from "ethers";
 import { INonfungiblePositionManager } from "../../typechain-types";
 import "dotenv/config";
-import { getERC20TokenContract } from "./common";
+import { FeeAmount, getERC20TokenContract, getPoolAddress } from "./common";
 
 const INonfungiblePositionManagerAddress =
   "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1"; // base链上的 Uniswap V3 Position Manager 地址
@@ -132,6 +132,60 @@ class PositionManager {
     const receipt = await tx.wait();
     return receipt!;
   }
+
+  public async checkActivated(
+    tokenId: bigint
+  ): Promise<[activate: boolean, position: PositionResponse]> {
+    if (!this.nonfungiblePositionManager) {
+      throw new Error("Position Manager is not initialized.");
+    }
+    const position = await this.nonfungiblePositionManager.positions(tokenId);
+    const { token0, token1, fee, tickLower, tickUpper } = position;
+    const uniswapV3PoolContract = await ethers.getContractAt(
+      "IUniswapV3Pool",
+      getPoolAddress(token0, token1, Number(fee))
+    );
+    const slot0 = await uniswapV3PoolContract.slot0();
+    console.log(
+      `Current tick: ${slot0.tick}, Lower tick: ${tickLower}, Upper tick: ${tickUpper}`
+    );
+    return [slot0.tick >= tickLower && slot0.tick <= tickUpper, position];
+  }
+
+  public async closeAllPositions(): Promise<TransactionReceipt[]> {
+    const ids = await this.checkIds();
+    const receipts: TransactionReceipt[] = [];
+    for (const id of ids) {
+      const position = await this.getPosition(id);
+      if (position.liquidity > 0) {
+        // Remove liquidity
+        const decreaseLiquidityParams: INonfungiblePositionManager.DecreaseLiquidityParamsStruct =
+          {
+            tokenId: id,
+            liquidity: position.liquidity,
+            amount0Min: 0,
+            amount1Min: 0,
+            deadline: Math.floor(Date.now() / 1000) + 60 * 10, // 10 minutes from now
+          };
+        const removeReceipt = await this.removeLiquidity(
+          decreaseLiquidityParams
+        );
+        receipts.push(removeReceipt);
+        // Collect fees
+        const collectReceipt = await this.collect({
+          tokenId: id,
+          recipient: this.wallet!.address,
+          amount0Max: Uint128Max,
+          amount1Max: Uint128Max,
+        });
+        receipts.push(collectReceipt);
+      }
+      // Burn position
+      const burnReceipt = await this.burnPosition(id);
+      receipts.push(burnReceipt);
+    }
+    return receipts;
+  }
 }
 
 async function test() {
@@ -206,5 +260,17 @@ async function test() {
 // test()
 //   .then(() => console.log("Test completed successfully."))
 //   .catch((error) => console.error("Error during test:", error));
+
+async function testCloseAllPositions() {
+  const wallet = new Wallet(process.env.PRIVATE_KEY!, ethers.provider);
+  const positionManager = await PositionManager.create(wallet);
+  const receipts = await positionManager.closeAllPositions();
+  console.log("Close all positions receipts:", receipts);
+}
+// testCloseAllPositions()
+//   .then(() => console.log("Close all positions test completed successfully."))
+//   .catch((error) =>
+//     console.error("Error during close all positions test:", error)
+//   );
 
 export { PositionManager, PositionResponse, Uint128Max };
