@@ -56,7 +56,7 @@ async function getUniswapV3PoolContract(
 function getPoolAddress(
   tokenA: string, // 代币A地址
   tokenB: string, // 代币B地址
-  fee: FeeAmount,
+  fee: FeeAmount | number,
   overrideFactoryAddress?: string,
   overrideInitCodeHash?: string
 ): string {
