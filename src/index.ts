@@ -14,65 +14,28 @@ import { config } from "./config";
 import { Wallet } from "ethers";
 import { PositionManager } from "./lib/positionManager";
 import { SwapRouter, ExactInputSingleParams } from "./exchange/dex/uniswapV3";
-import { INonfungiblePositionManager } from "../typechain-types";
+import {
+  INonfungiblePositionManager,
+  IERC20,
+  IUniswapV3Pool,
+} from "../typechain-types";
 
-const okxClient = new RestClient(
-  {
-    apiKey: process.env.OKX_API_KEY!,
-    apiSecret: process.env.OKX_API_SECRET!,
-    apiPass: process.env.OKX_API_PASSPHRASE!,
-  },
-  "prod"
-);
+const MaxUint128 = 340282366920938463463374607431768211455n; // 2^128 - 1
+const okxClient = new RestClient({
+  apiKey: process.env.OKX_API_KEY!,
+  apiSecret: process.env.OKX_API_SECRET!,
+  apiPass: process.env.OKX_API_PASSPHRASE!,
+});
 
-// 执行流程，以ETH/USDT为例
-async function exec(wallet: Wallet, pool: Pool) {
-  // 创建所需的实例（包括链上合约实例）
-  // ERC20代币合约实例
-  const wethContract = await getERC20TokenContract(pool.token0.address, wallet);
-  const usdcContract = await getERC20TokenContract(pool.token1.address, wallet);
-  // 创建uniswap v3 Pool合约实例
-  const poolAddress = getPoolAddress(
-    pool.token0.address,
-    pool.token1.address,
-    pool.fee
-  );
-  const uniswapV3PoolContract = await getUniswapV3PoolContract(poolAddress);
-  // 创建positionManager合约实例
-  const positionManager = await PositionManager.create(wallet);
-  // 创建uniswap v3 swapRouter合约实例
-  const swapRouter = await SwapRouter.create(wallet);
-  // 向swapRouter合约授权WETH与USDC
-  {
-    // 检查allowance是否为MaxUint256，如果不是则需要授权
-    const wethAllowance = await wethContract.allowance(
-      wallet.address,
-      swapRouter.swapRouterAddress
-    );
-    const usdcAllowance = await usdcContract.allowance(
-      wallet.address,
-      swapRouter.swapRouterAddress
-    );
-    if (wethAllowance < ethers.MaxUint256) {
-      const wethApproval = await wethContract.approve(
-        swapRouter.swapRouterAddress,
-        ethers.MaxUint256
-      );
-      await wethApproval.wait(1);
-    } else {
-      console.log("WETH allowance is already MaxUint256, no need to approve.");
-    }
-    if (usdcAllowance < ethers.MaxUint256) {
-      const usdcApproval = await usdcContract.approve(
-        swapRouter.swapRouterAddress,
-        ethers.MaxUint256
-      );
-      await usdcApproval.wait(1);
-    } else {
-      console.log("USDC allowance is already MaxUint256, no need to approve.");
-    }
-  }
-
+async function createPositionAndOkxHedge(
+  pool: Pool,
+  wallet: Wallet,
+  wethContract: IERC20,
+  usdcContract: IERC20,
+  uniswapV3PoolContract: IUniswapV3Pool,
+  positionManager: PositionManager,
+  swapRouter: SwapRouter
+): Promise<bigint> {
   // 获取链上的ETH价格
   const slot0 = await uniswapV3PoolContract.slot0();
   const currentTick = slot0.tick;
@@ -116,7 +79,7 @@ async function exec(wallet: Wallet, pool: Pool) {
       swapWethAmount.toFixed(6),
       pool.token0.decimals
     );
-    if (amountIn > 0n) {
+    if (amountIn > 100000000000000n) {
       swapParams = {
         tokenIn: pool.token0.address,
         tokenOut: pool.token1.address,
@@ -134,7 +97,7 @@ async function exec(wallet: Wallet, pool: Pool) {
       swapUsdcAmount.toFixed(6),
       pool.token1.decimals
     );
-    if (amountIn > 0n) {
+    if (amountIn > 10000n) {
       swapParams = {
         tokenIn: pool.token1.address,
         tokenOut: pool.token0.address,
@@ -175,20 +138,45 @@ async function exec(wallet: Wallet, pool: Pool) {
   const newWethAmountReadable = Number(
     ethers.formatUnits(newWethBalance, pool.token0.decimals)
   );
+  // 查看okx账户的eth合约的持仓数量
+  const okxPositions = await okxClient.getPositions({
+    instType: "SWAP",
+    instId: "ETH-USDT-SWAP",
+  });
+  const ethPosition = okxPositions.find(
+    (position) =>
+      position.instId === "ETH-USDT-SWAP" && position.posSide === "net"
+  );
+  const needOpenPosition = Number(
+    (-10 * newWethAmountReadable - Number(ethPosition)).toFixed(2)
+  );
   // 市价单, 开3倍杠杆
   await okxClient.setLeverage({
     instId: "ETH-USDT-SWAP",
     lever: "3",
     mgnMode: "cross",
   });
-  await okxClient.submitOrder({
-    instId: "ETH-USDT-SWAP",
-    side: "sell",
-    ordType: "market",
-    sz: (10 * newWethAmountReadable).toFixed(2),
-    tdMode: "cross",
-    posSide: "net",
-  });
+  if (needOpenPosition < 0) {
+    await okxClient.submitOrder({
+      instId: "ETH-USDT-SWAP",
+      side: "sell",
+      ordType: "market",
+      sz: Math.abs(needOpenPosition).toFixed(2),
+      tdMode: "cross",
+      posSide: "net",
+    });
+  } else if (needOpenPosition > 0) {
+    await okxClient.submitOrder({
+      instId: "ETH-USDT-SWAP",
+      side: "buy",
+      ordType: "market",
+      sz: needOpenPosition.toFixed(2),
+      tdMode: "cross",
+      posSide: "net",
+    });
+  } else {
+    console.log("No need to open position on OKX, already hedged.");
+  }
   // 以当前tick上下150个tick为界，提供流动性
   let mintPositionParams: INonfungiblePositionManager.MintParamsStruct = {
     token0: pool.token0.address,
@@ -223,6 +211,131 @@ async function exec(wallet: Wallet, pool: Pool) {
       pool.token1.decimals
     )}`
   );
+  return tokenId;
+}
+
+// 执行流程，以ETH/USDT为例
+async function exec(wallet: Wallet, pool: Pool) {
+  // 创建所需的实例（包括链上合约实例）
+  // ERC20代币合约实例
+  const wethContract = await getERC20TokenContract(pool.token0.address, wallet);
+  const usdcContract = await getERC20TokenContract(pool.token1.address, wallet);
+  // 创建uniswap v3 Pool合约实例
+  const poolAddress = getPoolAddress(
+    pool.token0.address,
+    pool.token1.address,
+    pool.fee
+  );
+  const uniswapV3PoolContract = await getUniswapV3PoolContract(poolAddress);
+  // 创建positionManager合约实例
+  const positionManager = await PositionManager.create(wallet);
+  // 创建uniswap v3 swapRouter合约实例
+  const swapRouter = await SwapRouter.create(wallet);
+  // 向swapRouter合约授权WETH与USDC
+  {
+    // 检查allowance是否为MaxUint256，如果不是则需要授权
+    const wethAllowance = await wethContract.allowance(
+      wallet.address,
+      swapRouter.swapRouterAddress
+    );
+    const usdcAllowance = await usdcContract.allowance(
+      wallet.address,
+      swapRouter.swapRouterAddress
+    );
+    const threshold = BigInt(Math.floor(Number(ethers.MaxUint256) * 0.9)); // 设置一个阈值，避免频繁授权
+    if (wethAllowance < threshold) {
+      const wethApproval = await wethContract.approve(
+        swapRouter.swapRouterAddress,
+        ethers.MaxUint256
+      );
+      await wethApproval.wait(1);
+    } else {
+      console.log("WETH allowance is already MaxUint256, no need to approve.");
+    }
+    if (usdcAllowance < threshold) {
+      const usdcApproval = await usdcContract.approve(
+        swapRouter.swapRouterAddress,
+        ethers.MaxUint256
+      );
+      await usdcApproval.wait(1);
+    } else {
+      console.log("USDC allowance is already MaxUint256, no need to approve.");
+    }
+  }
+  //
+  let tokenId: number | bigint | undefined;
+  tokenId = 3395064n;
+  while (true) {
+    try {
+      // 检查position是否激活,如果没有激活则移除流动性并且
+      if (tokenId) {
+        const [isActive, position] = await positionManager.checkActivated(
+          tokenId as bigint
+        );
+        if (!isActive) {
+          console.log("Position is not active, removing liquidity...");
+
+          // 移除全部流动性
+          const decreaseLiquidityParams = {
+            tokenId: tokenId as bigint,
+            liquidity: position.liquidity, // 移除全部流动性
+            amount0Min: 0, // 最小接收的 token0 数量，可以设置为 0 或合理的滑点保护值
+            amount1Min: 0, // 最小接收的 token1 数量，可以设置为 0 或合理的滑点保护值
+            deadline: Math.floor(Date.now() / 1000) + 60 * 20, // 20分钟超时
+          };
+
+          // 调用 removeLiquidity 移除流动性
+          const decreaseReceipt = await positionManager.removeLiquidity(
+            decreaseLiquidityParams
+          );
+
+          // 收集已移除流动性产生的代币和手续费
+          const collectParams = {
+            tokenId: tokenId as bigint,
+            recipient: wallet.address,
+            amount0Max: MaxUint128, // 收集所有可用的 token0
+            amount1Max: MaxUint128, // 收集所有可用的 token1
+          };
+
+          const collectReceipt = await positionManager.collect(collectParams);
+
+          console.log(
+            "Successfully removed all liquidity and collected tokens"
+          );
+
+          // 创建新的流动性头寸并对冲
+          tokenId = await createPositionAndOkxHedge(
+            pool,
+            wallet,
+            wethContract,
+            usdcContract,
+            uniswapV3PoolContract,
+            positionManager,
+            swapRouter
+          );
+        } else {
+          console.log("Position is active, no need to operate.");
+        }
+      } else {
+        // 创建新的流动性头寸并对冲
+        tokenId = await createPositionAndOkxHedge(
+          pool,
+          wallet,
+          wethContract,
+          usdcContract,
+          uniswapV3PoolContract,
+          positionManager,
+          swapRouter
+        );
+      }
+    } catch (error) {
+      console.error("Error during position management:", error);
+    } finally {
+      // 等待一段时间后再次检查
+      await new Promise((resolve) => setTimeout(resolve, 30000)); // 等待30秒
+      console.log("Waiting for 30 seconds before next check...");
+    }
+  }
 }
 
 async function main() {
