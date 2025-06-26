@@ -103,7 +103,7 @@ class PositionManager {
       params
     );
     const tx = await this.nonfungiblePositionManager!.mint(params);
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(1);
     if (receipt!.status !== 1) {
       throw new Error("Minting position failed.");
     } else {
@@ -115,7 +115,7 @@ class PositionManager {
     params: INonfungiblePositionManager.DecreaseLiquidityParamsStruct
   ): Promise<TransactionReceipt> {
     const tx = await this.nonfungiblePositionManager!.decreaseLiquidity(params);
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(1);
     return receipt!;
   }
 
@@ -123,13 +123,13 @@ class PositionManager {
     params: INonfungiblePositionManager.CollectParamsStruct
   ): Promise<TransactionReceipt> {
     const tx = await this.nonfungiblePositionManager!.collect(params);
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(1);
     return receipt!;
   }
 
   public async burnPosition(tokenId: bigint): Promise<TransactionReceipt> {
     const tx = await this.nonfungiblePositionManager!.burn(tokenId);
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(1);
     return receipt!;
   }
 
@@ -147,7 +147,7 @@ class PositionManager {
     );
     const slot0 = await uniswapV3PoolContract.slot0();
     console.log(
-      `Current tick: ${slot0.tick}, Lower tick: ${tickLower}, Upper tick: ${tickUpper}`
+      `positionId: ${tokenId} Current tick: ${slot0.tick}, Lower tick: ${tickLower}, Upper tick: ${tickUpper}`
     );
     return [slot0.tick >= tickLower && slot0.tick <= tickUpper, position];
   }

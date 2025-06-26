@@ -177,13 +177,13 @@ async function createPositionAndOkxHedge(
   } else {
     console.log("No need to open position on OKX, already hedged.");
   }
-  // 以当前tick上下150个tick为界，提供流动性
+  // 以当前tick上下250个tick为界，提供流动性
   let mintPositionParams: INonfungiblePositionManager.MintParamsStruct = {
     token0: pool.token0.address,
     token1: pool.token1.address,
     fee: pool.fee,
-    tickLower: getValidTick(Number(currentTick - 150n), TICK_SPACING[pool.fee]),
-    tickUpper: getValidTick(Number(currentTick + 150n), TICK_SPACING[pool.fee]),
+    tickLower: getValidTick(Number(currentTick - 250n), TICK_SPACING[pool.fee]),
+    tickUpper: getValidTick(Number(currentTick + 250n), TICK_SPACING[pool.fee]),
     amount0Desired: newWethBalance,
     amount1Desired: newUsdcBalance,
     amount0Min: 0,
@@ -264,7 +264,7 @@ async function exec(wallet: Wallet, pool: Pool) {
   }
   //
   let tokenId: number | bigint | undefined;
-  tokenId = 3395064n;
+  tokenId = 3428019n;
   while (true) {
     try {
       // 检查position是否激活,如果没有激活则移除流动性并且
@@ -273,35 +273,64 @@ async function exec(wallet: Wallet, pool: Pool) {
           tokenId as bigint
         );
         if (!isActive) {
-          console.log("Position is not active, removing liquidity...");
-
-          // 移除全部流动性
-          const decreaseLiquidityParams = {
-            tokenId: tokenId as bigint,
-            liquidity: position.liquidity, // 移除全部流动性
-            amount0Min: 0, // 最小接收的 token0 数量，可以设置为 0 或合理的滑点保护值
-            amount1Min: 0, // 最小接收的 token1 数量，可以设置为 0 或合理的滑点保护值
-            deadline: Math.floor(Date.now() / 1000) + 60 * 20, // 20分钟超时
-          };
-
-          // 调用 removeLiquidity 移除流动性
-          const decreaseReceipt = await positionManager.removeLiquidity(
-            decreaseLiquidityParams
-          );
-
-          // 收集已移除流动性产生的代币和手续费
-          const collectParams = {
-            tokenId: tokenId as bigint,
-            recipient: wallet.address,
-            amount0Max: MaxUint128, // 收集所有可用的 token0
-            amount1Max: MaxUint128, // 收集所有可用的 token1
-          };
-
-          const collectReceipt = await positionManager.collect(collectParams);
-
           console.log(
-            "Successfully removed all liquidity and collected tokens"
+            `{${tokenId}} Position is not active, removing liquidity...`
           );
+
+          if (position.liquidity === 0n) {
+            console.log(
+              `{${tokenId}} Position liquidity is 0, no need to remove liquidity.`
+            );
+          } else {
+            // 移除全部流动性
+            const decreaseLiquidityParams = {
+              tokenId: tokenId as bigint,
+              liquidity: position.liquidity, // 移除全部流动性
+              amount0Min: 0, // 最小接收的 token0 数量，可以设置为 0 或合理的滑点保护值
+              amount1Min: 0, // 最小接收的 token1 数量，可以设置为 0 或合理的滑点保护值
+              deadline: Math.floor(Date.now() / 1000) + 60 * 20, // 20分钟超时
+            };
+
+            // 调用 removeLiquidity 移除流动性
+            const decreaseReceipt = await positionManager.removeLiquidity(
+              decreaseLiquidityParams
+            );
+
+            console.log(
+              `Successfully removed liquidity for position {${tokenId}}`
+            );
+          }
+
+          if (
+            position.liquidity === 0n &&
+            (position.tokensOwed0 === 0n || position.tokensOwed1 === 0n)
+          ) {
+            console.log(
+              `No tokens owed for position {${tokenId}}, no need to collect.`
+            );
+          } else {
+            // 收集已移除流动性产生的代币和手续费
+            const collectParams = {
+              tokenId: tokenId as bigint,
+              recipient: wallet.address,
+              amount0Max: MaxUint128, // 收集所有可用的 token0
+              amount1Max: MaxUint128, // 收集所有可用的 token1
+            };
+
+            const collectReceipt = await positionManager.collect(collectParams);
+
+            console.log(
+              `Successfully collected tokens for position {${tokenId}}`
+            );
+          }
+
+          // burn position
+          // const burnReceipt = await positionManager.burnPosition(
+          //   tokenId as bigint
+          // );
+
+          // 清除tokenId
+          tokenId = undefined;
 
           // 创建新的流动性头寸并对冲
           tokenId = await createPositionAndOkxHedge(
@@ -314,7 +343,7 @@ async function exec(wallet: Wallet, pool: Pool) {
             swapRouter
           );
         } else {
-          console.log("Position is active, no need to operate.");
+          console.log(`{${tokenId}} Position is active, no need to operate.`);
         }
       } else {
         // 创建新的流动性头寸并对冲
@@ -327,13 +356,14 @@ async function exec(wallet: Wallet, pool: Pool) {
           positionManager,
           swapRouter
         );
+        console.log(`Created new position with token ID: ${tokenId}`);
       }
     } catch (error) {
-      console.error("Error during position management:", error);
+      console.error(`Error during position {${tokenId}} management:`, error);
     } finally {
       // 等待一段时间后再次检查
-      await new Promise((resolve) => setTimeout(resolve, 30000)); // 等待30秒
       console.log("Waiting for 30 seconds before next check...");
+      await new Promise((resolve) => setTimeout(resolve, 30000)); // 等待30秒
     }
   }
 }
